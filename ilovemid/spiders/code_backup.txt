@@ -1,0 +1,122 @@
+    def parse_group(self, response):
+        log.msg('*********Reached parse_group', level=log.DEBUG)
+        shows = response.xpath("//div[@id='main_content']/div/div/strong/a")
+        # count = 0
+        log.msg("Number of shows = %s"%len(shows), level=log.DEBUG)
+        for show in shows:
+            # if count > 10 :
+            #     break
+            # count +=1
+            link = show.xpath('./@href').extract()[0]
+            log.msg(link, level=log.DEBUG)
+            self.show_chain.append(
+                scrapy.http.Request(link, callback=self.parse_show))
+
+        if self.show_chain:
+            yield self.show_chain.pop(0)
+            # return self.show_chain
+
+    def parse_show(self,response):
+        log.msg('*************Reached parse_show', level=log.DEBUG)
+        episodes = response.xpath("//td[@class='list-num']")
+        show_title = response.xpath("//div[@id='main_content']/div[@class='bo-title']/span[@class='bo-name']//text()").extract()[0]
+        # count = 0
+        log.msg('Show title -----=  %s'%show_title,level=log.DEBUG)
+        log.msg("Number of Episodes = %s"%len(episodes), level=log.DEBUG)
+        for episode in episodes[::-1]:
+            # if count > 10 :
+            #     break
+            # count +=1
+            # list_num = episodes.xpath('./@text()').extract()
+            link = response.url+"&wr_id="+episode.xpath(".//text()").extract()[0]
+            self.episode_chain.append(
+                scrapy.http.Request(link, callback=self.parse_episode))
+
+        if self.episode_chain:
+            yield self.episode_chain.pop(0)
+            # return self.episode_chain
+        if self.show_chain:
+            yield self.show_chain.pop(0)
+
+    def parse_episode(self, response):
+        try:
+            # log.msg('**************Reached parse_episode', level=log.DEBUG)
+            selector = scrapy.Selector(response)
+            item = IlovemidItem()
+
+            item['url'] = response.url
+
+            image_ele =  response.xpath("//div[@id='main_content']/div/img/@src")
+            log.msg(image_ele,log.DEBUG)
+            if len(image_ele) > 0:
+                item['image_url'] = image_ele.extract()
+            else :
+                image_ele = response.xpath("//article[@id='bo_v_atc']/div/div/div")
+                if len(image_ele) > 0:
+                    item['image_url'] = image_ele[0].xpath('.//img/@src').extract()
+                else :
+                    image_ele = response.xpath("//article[@id='bo_v_atc']/div")
+                    if len(image_ele) > 0:
+                        item['image_url'] = image_ele[0].xpath('.//img/@src').extract()
+            title =  response.xpath("//div[@class='view_head']/*/header/h1/text()").extract()
+            item['title'] = title
+            for_pub_date = response.xpath("//section[@id='bo_v_info']/ul/li[@class='last']/span/text()").extract()
+            item['posted_date_time'] = for_pub_date
+            # if len(response.xpath("//section[@id='bo_v_info']/ul/li")) > 1 :
+            #     tags = response.xpath("//section[@id='bo_v_info']/ul/li")[1].xpath('.//text()').extract()
+            #     item['tags'] = tags
+            tag_elem = response.xpath("//article[@id='bo_v_atc']/div[@class='view_tag']/text()")
+            if len(tag_elem) > 0:
+                item['tags'] = response.xpath("//article[@id='bo_v_atc']/div[@class='view_tag']/text()").extract()[0]
+            else:
+                tag_elem = response.xpath("//div[@id='bo_v']/div[@class='view_head']/div[@class='subject']/header/h1/text()").extract()
+                if len(tag_elem) > 0:
+                    item['tags'] = tag_elem[0]
+
+            embed_urls_root = response.xpath("//article[@id='bo_v_atc']/div[@class='viewContents']")
+            embed_urls = embed_urls_root.xpath(".//a/@href").extract()
+
+            decription_ele = response.xpath("//article[@id='bo_v_atc']/div/div/span/span/span/text()").extract()
+            if len(decription_ele) > 0:
+                item['description'] = decription_ele[0]
+            cat_string = response.xpath("//span[@class='on old']/text()").extract()
+            if len(cat_string) > 0:
+                i = cat_string[0].index('(')
+                item['category'] = cat_string[0][0:i]
+            season_ele  = response.xpath("//section[@id='bo_v_info']/ul/li[position()=2]/text()").extract()
+            if len(season_ele) > 0 :
+                item['season'] = season_ele[0]
+            def update_url(url):
+                splitted = urlparse.urlsplit(url)
+                print url
+                print splitted
+                return ''.join(
+                    [
+                        splitted.scheme or 'http',
+                        '://',
+                        splitted.netloc,
+                        urllib.quote(splitted.path),
+                        '?' if splitted.query else '',
+                        urllib.quote(splitted.query),
+                        '#' if splitted.fragment else '',
+                        urllib.quote(splitted.fragment)
+                    ]
+                )
+
+            item['embed_urls'] = [
+                {'embed': {
+                    'src': update_url(url),
+                    'width': "480",
+                    'height': "400"}
+                } for url in embed_urls[:2]]
+
+            yield item
+            if self.episode_chain:
+                yield self.episode_chain.pop(0)
+            if self.group_chain:
+                yield self.group_chain.pop(0)
+            if self.show_chain:
+                yield self.show_chain.pop(0)
+        except:
+            traceback.print_exc(file=sys.stdout)
+
